@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # BigQuery Settings
     bigquery_dataset: str
     bigquery_table: str
+    save_predictions_to_bq: bool = False
     
     # Vertex AI Settings  
     vertex_ai_location: str = "us-central1"

@@ -35,10 +35,14 @@ logs/
 data/raw/
 data/processed/
 
-# ML Models
+# ML Models (solo archivos binarios, no código)
 *.pkl
 *.h5
-models/
+*.joblib
+*.pt
+*.pth
+*.onnx
+*.sav
 
 # Pytest
 .pytest_cache/
