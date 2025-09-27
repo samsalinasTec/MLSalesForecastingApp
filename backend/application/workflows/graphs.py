@@ -70,7 +70,7 @@ def build_prediction_workflow():
     return app
 
 # Crear instancia global
-prediction_workflow = build_prediction_workflow()
+prediction_workflow = build_prediction_workflow()   
 
 async def run_prediction_workflow(
     sorteo_types: List[str],

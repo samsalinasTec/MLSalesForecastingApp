@@ -138,6 +138,34 @@ class BigQueryRepository:
         except Exception as e:
             logger.error(f"Error obteniendo sorteos activos: {e}")
             raise
+
+    def get_all_products(self, tipo: str) -> pd.DataFrame:
+        """
+        Obtiene todos los productos de un tipo específico
+        """
+        query = f"""
+        SELECT 
+            *
+        FROM 
+            `{settings.gcp_project_id}.{self.dataset_id}.DMSorteos`
+        WHERE 
+            FECHA_CIERRE >= CURRENT_DATE()
+        ORDER BY 
+            NUMERO_EDICION DESC
+        """
+        
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("tipo", "STRING", tipo)
+            ]
+        )
+        
+        try:
+            df = self.client.query(query, job_config=job_config).to_dataframe()
+            return df
+        except Exception as e:
+            logger.error(f"Error obteniendo sorteos activos: {e}")
+            raise
     
     def save_predictions(self, predictions_df: pd.DataFrame, table_name: str = "predictions"):
         """
