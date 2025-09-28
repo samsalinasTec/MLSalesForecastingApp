@@ -233,8 +233,8 @@ async def smooth_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     if applied:
                         # Ajustar todos los valores proporcionalmente
                         factor = smoothed_pred.final_value / latest_prediction
-                        df_pred['TALONES_ESTIMADOS'] = df_pred['TALONES_ESTIMADOS'] * factor
-                        df_pred['TALONES_DIARIOS_ESTIMADOS'] = df_pred['TALONES_DIARIOS_ESTIMADOS'] * factor
+                        df_pred['TALONES_ESTIMADOS_FACTOR'] = df_pred['TALONES_ESTIMADOS'] * factor
+                        df_pred['TALONES_DIARIOS_ESTIMADOS_FACTOR'] = df_pred['TALONES_DIARIOS_ESTIMADOS'] * factor
                         
                         needs_explanation = True
                         logger.info(f"Suavizado aplicado a {sorteo_nombre}: {message}")

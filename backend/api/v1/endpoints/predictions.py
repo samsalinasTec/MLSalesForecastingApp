@@ -54,12 +54,12 @@ async def create_predictions(
             raise HTTPException(status_code=500, detail=result.get("error"))
         
         # Opcionalmente guardar en BigQuery en background
-        if settings.save_predictions_to_bq:
+        if settings.save_predictions_to_bq and request.save_to_bq:
             background_tasks.add_task(
                 save_predictions_to_bigquery,
                 result["final_predictions"]
             )
-        
+                
         return PredictionResponse(
             success=True,
             predictions=result.get("final_predictions", {}),

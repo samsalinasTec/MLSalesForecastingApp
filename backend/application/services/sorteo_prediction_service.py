@@ -111,7 +111,7 @@ class SorteoPredictionService:
         self,
         sorteo_info: Dict,
         df_escalado: pd.DataFrame,
-        df_boletos: pd.DataFrame
+        df_boletos: pd.DataFrame # TODO: df_boletos podría usarse para métricas adicionales o validación pero no se usa por ahora
     ) -> pd.DataFrame:
         """
         Genera predicción para un sorteo específico

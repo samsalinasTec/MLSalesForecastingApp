@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     
     # BigQuery Settings
     bigquery_dataset: str
-    bigquery_table: str
+    bigquery_table: Optional[str] = None
     save_predictions_to_bq: bool = False
     
     # Vertex AI Settings  

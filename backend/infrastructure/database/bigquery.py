@@ -139,9 +139,9 @@ class BigQueryRepository:
             logger.error(f"Error obteniendo sorteos activos: {e}")
             raise
 
-    def get_all_products(self, tipo: str) -> pd.DataFrame:
+    def get_all_products(self) -> pd.DataFrame:
         """
-        Obtiene todos los productos de un tipo específico
+        Obtiene todos los productos activos
         """
         query = f"""
         SELECT 
