@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # API Settings
     api_version: str = "v1"
     debug_mode: bool = False
-    port: int = 8000
+    port: int = 8080
     
     # Google Cloud Settings
     gcp_project_id: str

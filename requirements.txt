@@ -1,28 +1,38 @@
 # Core
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-dotenv==1.0.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
+fastapi==0.117.1
+uvicorn[standard]==0.37.0
+python-dotenv>=1.0.0,<2
 
-# LangGraph & LangChain (actualizados y compatibles)
-langchain>=0.2,<0.4
-langgraph>=0.2.20,<0.3
-langchain-google-vertexai>=0.1,<0.2
+# Config / Validación
+pydantic>=2.11,<3
+pydantic-settings>=2.11,<3
+
+# LangChain & LangGraph (compatibles entre sí)
+langchain==0.3.27
+langgraph>=0.6,<0.7
+langchain-google-vertexai==2.1.2
 
 # Google Cloud
-google-cloud-bigquery==3.15.0
-google-cloud-aiplatform==1.40.0
+google-cloud-bigquery==3.38.0
+google-cloud-aiplatform>=1.115,<2
 
 # Data Processing
-pandas==2.1.4
-numpy==1.26.3
-scikit-learn==1.4.0
+pandas==2.3.2
+numpy==2.3.3
+scikit-learn==1.7.2
 
 # Utils
-httpx==0.26.0
-python-multipart==0.0.6
+httpx==0.28.1
+python-multipart==0.0.20
 
 # Development (opcional)
-pytest==7.4.4
-black==23.12.1
+pytest==8.4.2
+black==25.9.0
+
+# Frontend
+streamlit==1.50.0
+plotly==6.3.0
+
+
+# Google Cloud
+db-dtypes==1.2.0  # Requerido para tipos de fecha de BigQuery
