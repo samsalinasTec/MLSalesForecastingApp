@@ -499,7 +499,7 @@ async def compile_results_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # Compilar estado final
         return {
             "final_predictions": final_predictions,
-            "summary_df": df_resumen,
+            "summary_df": df_resumen.to_dict('records'),
             "market_insights": state.get("market_insights", {}),
             "end_time": end_time,
             "processing_time": processing_time,

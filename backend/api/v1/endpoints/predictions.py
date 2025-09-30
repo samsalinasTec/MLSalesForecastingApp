@@ -5,7 +5,7 @@ Cambios principales: products → sorteos
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from typing import List, Optional, Dict, Any
-from datetime import date
+from datetime import date, datetime
 import logging
 import pandas as pd
 from io import StringIO
@@ -17,6 +17,7 @@ from backend.application.workflows.graphs import run_prediction_workflow
 from backend.application.services.sorteo_prediction_service import SorteoPredictionService
 from backend.core.config import settings
 from backend.core.constants import SorteoType
+from backend.infrastructure.database.bigquery import BigQueryRepository
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ router = APIRouter(
 
 # Instancia del servicio
 prediction_service = SorteoPredictionService()
+bq_repo = BigQueryRepository()
 
 @router.post("/", response_model=PredictionResponse)
 async def create_predictions(
@@ -53,12 +55,22 @@ async def create_predictions(
         if result.get("processing_stage") == "failed":
             raise HTTPException(status_code=500, detail=result.get("error"))
         
-        # Opcionalmente guardar en BigQuery en background
+        # Guardar en BigQuery en background si está configurado
         if settings.save_predictions_to_bq and request.save_to_bq:
+            # Guardar predicciones detalladas
             background_tasks.add_task(
-                save_predictions_to_bigquery,
-                result["final_predictions"]
+                bq_repo.save_predictions,
+                result["final_predictions"],
+                datetime.now()
             )
+            
+            # Guardar resumen si existe
+            if "summary_data" in result and result["summary_data"]:
+                background_tasks.add_task(
+                    bq_repo.save_prediction_summary,
+                    result["summary_data"],
+                    datetime.now()
+                )
                 
         return PredictionResponse(
             success=True,
@@ -66,7 +78,8 @@ async def create_predictions(
             processing_time=result.get("processing_time", 0),
             metadata={
                 "sorteos_procesados": len(result.get("final_predictions", {})),
-                "tipos_procesados": request.sorteo_types
+                "tipos_procesados": request.sorteo_types,
+                "summary_available": bool(result.get("summary_data"))
             },
             debug_info=result if settings.debug_mode else None
         )
@@ -108,91 +121,103 @@ async def predict_all_active_sorteos():
 @router.get("/summary/download")
 async def download_summary():
     """
-    Descarga el resumen de predicciones como CSV
+    Descarga el resumen de predicciones más reciente como CSV
     
-    LEARNING NOTE: Este es el CSV que mencionaste que querías descargar
+    LEARNING NOTE: Recupera el último resumen guardado en BigQuery
     """
     
     try:
-        # Obtener últimas predicciones
-        # TODO: Implementar obtención desde caché o BD
+        # Obtener el resumen más reciente de BigQuery
+        summary_data = await bq_repo.get_latest_summary()
         
-        # Por ahora, generar nuevo
-        predictions = await prediction_service.predict_all_active_sorteos()
-        
-        if 'resumen' not in predictions:
+        if not summary_data:
             raise HTTPException(
                 status_code=404,
-                detail="No hay resumen disponible"
+                detail="No hay resumen de predicciones disponible. Por favor ejecuta primero las predicciones."
             )
         
-        df_resumen = predictions['resumen']
+        # Convertir a DataFrame
+        df_resumen = pd.DataFrame(summary_data)
         
-        # Convertir DataFrame a CSV
+        # Convertir a CSV
         stream = StringIO()
         df_resumen.to_csv(stream, index=False)
         stream.seek(0)
         
-        # Retornar como descarga
+        # Preparar nombre del archivo con timestamp
+        filename = f"resumen_predicciones_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
         return StreamingResponse(
             iter([stream.getvalue()]),
             media_type="text/csv",
             headers={
-                "Content-Disposition": f"attachment; filename=resumen_predicciones_{date.today()}.csv"
+                "Content-Disposition": f"attachment; filename={filename}"
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error generando CSV: {str(e)}")
+        logger.error(f"Error descargando resumen: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/sorteo/{nombre_sorteo}")
-async def get_sorteo_prediction(
-    nombre_sorteo: str,
-    include_history: bool = Query(False, description="Incluir contexto histórico"),
-    include_chart_data: bool = Query(True, description="Incluir datos para gráfica")
+@router.get("/details/download")
+async def download_predictions_details(
+    sorteo_nombre: Optional[str] = Query(None, description="Nombre específico del sorteo")
 ):
     """
-    Obtiene la predicción para un sorteo específico
+    Descarga las predicciones detalladas como CSV
     
-    LEARNING NOTE: Para mostrar en el dashboard individual
+    Args:
+        sorteo_nombre: Si se especifica, descarga solo ese sorteo.
+                      Si no, descarga todas las predicciones recientes.
     """
     
     try:
-        # TODO: Implementar obtención desde caché
+        # Obtener predicciones detalladas más recientes
+        predictions_data = await bq_repo.get_latest_predictions(sorteo_nombre)
         
-        response = {
-            "sorteo": nombre_sorteo,
-            "prediction": {
-                "total_estimado": 0,  # TODO
-                "dias_restantes": 0,  # TODO
-                "porcentaje_avance": 0,  # TODO
+        if not predictions_data:
+            message = f"No hay predicciones disponibles"
+            if sorteo_nombre:
+                message += f" para el sorteo {sorteo_nombre}"
+            message += ". Por favor ejecuta primero las predicciones."
+            
+            raise HTTPException(status_code=404, detail=message)
+        
+        # Preparar CSV con los datos detallados
+        # La estructura dependerá de cómo guardes las predicciones
+        df_details = pd.DataFrame(predictions_data)
+        
+        # Convertir a CSV
+        stream = StringIO()
+        df_details.to_csv(stream, index=False)
+        stream.seek(0)
+        
+        # Preparar nombre del archivo
+        if sorteo_nombre:
+            filename = f"predicciones_{sorteo_nombre}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        else:
+            filename = f"predicciones_detalladas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
+        return StreamingResponse(
+            iter([stream.getvalue()]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
             }
-        }
+        )
         
-        if include_chart_data:
-            # Datos para la gráfica
-            response["chart_data"] = {
-                "fechas": [],
-                "valores_reales": [],
-                "valores_predichos": [],
-                "valores_suavizados": [],
-                "sorteos_historicos": []  # Para mostrar en el legend
-            }
-        
-        if include_history:
-            response["historical_context"] = []
-        
-        return response
-        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error obteniendo predicción: {str(e)}")
+        logger.error(f"Error descargando predicciones detalladas: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/active")
 async def get_active_sorteos():
     """
-    Lista todos los sorteos activos agrupados por tipo
+    Obtiene lista de sorteos activos agrupados por tipo
     """
     
     try:
@@ -201,7 +226,7 @@ async def get_active_sorteos():
         bq_repo = BigQueryRepository()
         df_info = bq_repo.get_sorteos_info()
         
-        # Filtrar activos
+        # Filtrar solo activos
         df_activos = df_info[
             pd.to_datetime(df_info["FECHA_CIERRE"]) >= pd.Timestamp.now()
         ]
@@ -250,22 +275,46 @@ async def get_model_metrics(nombre_sorteo: str):
         "metrics": metrics
     }
 
-# Función helper para guardar en BigQuery
-async def save_predictions_to_bigquery(predictions: Dict[str, Any]):
+@router.get("/sorteo/{nombre_sorteo}")
+async def get_sorteo_prediction(
+    nombre_sorteo: str,
+    include_history: bool = Query(False, description="Incluir contexto histórico"),
+    include_chart_data: bool = Query(True, description="Incluir datos para gráfica")
+):
     """
-    Guarda predicciones en BigQuery en background
+    Obtiene la predicción para un sorteo específico
+    
+    LEARNING NOTE: Para mostrar en el dashboard individual
     """
+    
     try:
-        from backend.infrastructure.database.bigquery import BigQueryRepository
+        # TODO: Implementar obtención desde caché
         
-        bq_repo = BigQueryRepository()
+        response = {
+            "sorteo": nombre_sorteo,
+            "prediction": {
+                "total_estimado": 0,  # TODO
+                "dias_restantes": 0,  # TODO
+                "porcentaje_avance": 0,  # TODO
+            }
+        }
         
-        for sorteo_name, pred_data in predictions.items():
-            if isinstance(pred_data, pd.DataFrame):
-                bq_repo.save_predictions(pred_data, "sorteo_predictions")
-                
-        logger.info(f"Predicciones guardadas en BigQuery")
+        if include_chart_data:
+            # Datos para la gráfica
+            response["chart_data"] = {
+                "fechas": [],
+                "valores_reales": [],
+                "valores_predichos": [],
+                "valores_suavizados": [],
+                "sorteos_historicos": []  # Para mostrar en el legend
+            }
+        
+        if include_history:
+            response["historical_context"] = []
+        
+        return response
         
     except Exception as e:
-        logger.error(f"Error guardando en BigQuery: {e}")
-        # No lanzar excepción porque es background task
+        logger.error(f"Error obteniendo predicción: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
