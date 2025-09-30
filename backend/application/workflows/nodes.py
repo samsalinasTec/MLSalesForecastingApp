@@ -5,14 +5,10 @@ Cada nodo es una función que procesa el estado
 
 import logging
 import pandas as pd
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-from backend.application.services.sorteo_prediction_service import SorteoPredictionService
-from backend.application.services.sorteo_selection_service import SorteoSelectionService
-from backend.application.services.smoothing_service import SmoothingService
-from backend.infrastructure.external.vertex_ai import VertexAIClient
-from backend.infrastructure.database.bigquery import BigQueryRepository
+# Imports de tipos (no inicializan nada)
 from backend.infrastructure.ml.preprocessing import (
     process_sorteo_sales_data,
     aggregate_daily_sales,
@@ -21,12 +17,71 @@ from backend.infrastructure.ml.preprocessing import (
 
 logger = logging.getLogger(__name__)
 
-# Instancias de servicios
-prediction_service = SorteoPredictionService()
-smoothing_service = SmoothingService()
-vertex_client = VertexAIClient()
-bq_repo = BigQueryRepository()
-selection_service = SorteoSelectionService()
+# ============================================================
+# LAZY LOADING: Variables privadas para almacenar instancias
+# ============================================================
+_prediction_service: Optional['SorteoPredictionService'] = None
+_smoothing_service: Optional['SmoothingService'] = None
+_vertex_client: Optional['VertexAIClient'] = None
+_bq_repo: Optional['BigQueryRepository'] = None
+_selection_service: Optional['SorteoSelectionService'] = None
+
+# ============================================================
+# FUNCIONES GETTER: Solo crean servicios cuando se necesitan
+# ============================================================
+def get_prediction_service():
+    """Obtiene o crea el servicio de predicción (lazy loading)"""
+    global _prediction_service
+    if _prediction_service is None:
+        logger.info("🔧 Inicializando SorteoPredictionService (primera vez)...")
+        from backend.application.services.sorteo_prediction_service import SorteoPredictionService
+        _prediction_service = SorteoPredictionService()
+        logger.info("✅ SorteoPredictionService listo")
+    return _prediction_service
+
+def get_smoothing_service():
+    """Obtiene o crea el servicio de suavizado (lazy loading)"""
+    global _smoothing_service
+    if _smoothing_service is None:
+        logger.info("🔧 Inicializando SmoothingService (primera vez)...")
+        from backend.application.services.smoothing_service import SmoothingService
+        _smoothing_service = SmoothingService()
+        logger.info("✅ SmoothingService listo")
+    return _smoothing_service
+
+def get_vertex_client():
+    """Obtiene o crea el cliente de Vertex AI (lazy loading)"""
+    global _vertex_client
+    if _vertex_client is None:
+        logger.info("🔧 Inicializando VertexAIClient (primera vez)...")
+        from backend.infrastructure.external.vertex_ai import VertexAIClient
+        _vertex_client = VertexAIClient()
+        logger.info("✅ VertexAIClient listo")
+    return _vertex_client
+
+def get_bq_repo():
+    """Obtiene o crea el repositorio de BigQuery (lazy loading)"""
+    global _bq_repo
+    if _bq_repo is None:
+        logger.info("🔧 Inicializando BigQueryRepository (primera vez)...")
+        from backend.infrastructure.database.bigquery import BigQueryRepository
+        _bq_repo = BigQueryRepository()
+        logger.info("✅ BigQueryRepository listo")
+    return _bq_repo
+
+def get_selection_service():
+    """Obtiene o crea el servicio de selección (lazy loading)"""
+    global _selection_service
+    if _selection_service is None:
+        logger.info("🔧 Inicializando SorteoSelectionService (primera vez)...")
+        from backend.application.services.sorteo_selection_service import SorteoSelectionService
+        _selection_service = SorteoSelectionService()
+        logger.info("✅ SorteoSelectionService listo")
+    return _selection_service
+
+# ============================================================
+# NODOS DEL WORKFLOW - Tu lógica original intacta
+# ============================================================
 
 async def fetch_data_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -38,6 +93,9 @@ async def fetch_data_node(state: Dict[str, Any]) -> Dict[str, Any]:
     
     logger.info("Fetching sorteo data from BigQuery")
     state["processing_stage"] = "fetching"
+    
+    # LAZY LOADING: Solo se crea cuando se necesita
+    bq_repo = get_bq_repo()
     
     errors = []
     
@@ -107,6 +165,10 @@ async def predict_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "processing_stage": "failed"
         }
     
+    # LAZY LOADING: Solo se crean cuando se necesitan
+    prediction_service = get_prediction_service()
+    selection_service = get_selection_service()
+    
     predictions = {}
     errors = []
     
@@ -118,6 +180,7 @@ async def predict_node(state: Dict[str, Any]) -> Dict[str, Any]:
         df_boletos = sorteo_data["df_boletos"]
         
         # Resetear sorteos seleccionados para esta ejecución
+        from backend.application.services.sorteo_selection_service import SorteoSelectionService
         SorteoSelectionService.reset_selected_sorteos()
         
         # Procesar cada tipo de sorteo solicitado
@@ -194,6 +257,9 @@ async def smooth_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if not state.get("apply_smoothing", True):
         logger.info("Smoothing skipped by configuration")
         return {"needs_llm_explanation": False}
+    
+    # LAZY LOADING: Solo se crea cuando se necesita
+    smoothing_service = get_smoothing_service()
     
     predictions = state.get("predictions", {})
     smoothed_predictions = {}
@@ -285,6 +351,10 @@ async def explain_node(state: Dict[str, Any]) -> Dict[str, Any]:
     
     logger.info("Generating LLM explanations for smoothed predictions")
     state["processing_stage"] = "explaining"
+    
+    # LAZY LOADING: Solo se crean cuando se necesitan
+    vertex_client = get_vertex_client()
+    smoothing_service = get_smoothing_service()
     
     predictions = state.get("predictions", {})
     was_smoothed = state.get("was_smoothed", {})

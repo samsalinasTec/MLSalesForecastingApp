@@ -6,7 +6,7 @@ Separado para cambiar fácilmente de proveedor (OpenAI, Anthropic, etc.)
 from google.cloud import aiplatform
 from vertexai.generative_models import GenerativeModel, GenerationConfig
 import vertexai
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import json
 import logging
 from backend.core.config import settings
@@ -22,21 +22,58 @@ class VertexAIClient:
     """
     
     def __init__(self):
-        """Inicializa Vertex AI"""
-        vertexai.init(
-            project=settings.gcp_project_id,
-            location=settings.vertex_ai_location
-        )
+        """
+        Inicializa configuración pero NO la conexión
+        LAZY LOADING: La conexión real se hace cuando se usa
+        """
+        self._initialized = False
+        self._model: Optional[GenerativeModel] = None
+        self._generation_config: Optional[GenerationConfig] = None
+        logger.info("VertexAIClient creado (sin conectar aún)")
+    
+    def _ensure_initialized(self):
+        """
+        Lazy initialization - solo conecta cuando se necesita
         
-        self.model = GenerativeModel(settings.model_name)
-        
-        # Configuración para respuestas consistentes
-        self.generation_config = GenerationConfig(
-            temperature=0.3,  # Baja temperatura = respuestas más consistentes
-            max_output_tokens=500,
-            top_p=0.8,
-            top_k=40
-        )
+        LEARNING NOTE: Este patrón evita conexiones costosas en el arranque
+        """
+        if not self._initialized:
+            logger.info("🔄 Inicializando conexión con Vertex AI...")
+            
+            try:
+                vertexai.init(
+                    project=settings.gcp_project_id,
+                    location=settings.vertex_ai_location
+                )
+                
+                self._model = GenerativeModel(settings.model_name)
+                
+                # Configuración para respuestas consistentes
+                self._generation_config = GenerationConfig(
+                    temperature=0.3,  # Baja temperatura = respuestas más consistentes
+                    max_output_tokens=500,
+                    top_p=0.8,
+                    top_k=40
+                )
+                
+                self._initialized = True
+                logger.info("✅ Vertex AI conectado exitosamente")
+                
+            except Exception as e:
+                logger.error(f"❌ Error conectando con Vertex AI: {str(e)}")
+                raise VertexAIException(f"Failed to initialize Vertex AI: {str(e)}")
+    
+    @property
+    def model(self) -> GenerativeModel:
+        """Acceso lazy al modelo"""
+        self._ensure_initialized()
+        return self._model
+    
+    @property
+    def generation_config(self) -> GenerationConfig:
+        """Acceso lazy a la configuración"""
+        self._ensure_initialized()
+        return self._generation_config
         
     async def analyze_prediction_change(
         self,
@@ -51,6 +88,9 @@ class VertexAIClient:
         
         LEARNING NOTE: Prompt engineering estructurado
         """
+        
+        # Solo inicializa cuando realmente se use
+        self._ensure_initialized()
         
         # LEARNING NOTE: System prompt claro y específico
         prompt = f"""
@@ -101,6 +141,9 @@ class VertexAIClient:
         PREGUNTA: ¿Quieres que el LLM sugiera acciones específicas?
         Por ejemplo: ajustar inventario, promociones, etc.
         """
+        
+        # Solo inicializa cuando realmente se use
+        self._ensure_initialized()
         
         prompt = f"""
         Analiza las siguientes predicciones de venta y proporciona insights:

@@ -24,20 +24,19 @@ from src.utils.data_parsers import (  # noqa: E402
     extract_training_list,
 )
 
-DEFAULT_API_URL = os.getenv("PREDICTIONS_API_URL", "http://localhost:8000/api/v1")
+DEFAULT_API_URL = os.getenv("PREDICTIONS_API_URL", "http://localhost:8080/api/v1")
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def cached_active_sorteos(base_url: str) -> Dict:
     """Cache layer around the ``/predictions/active`` endpoint."""
-
-    client = APIClient(base_url)
+    # Aumentamos el timeout para soportar respuestas lentas del backend (e.g., BigQuery frío)
+    client = APIClient(base_url, timeout=300.0)
     return client.get_active_sorteos()
 
 
 def initialize_session_state() -> None:
     """Populate default keys to avoid ``KeyError`` during reruns."""
-
     st.session_state.setdefault("api_base_url", DEFAULT_API_URL)
     st.session_state.setdefault("predictions_payload", None)
     st.session_state.setdefault("predictions", {})
@@ -58,7 +57,11 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Configuración de la API")
-        api_base = st.text_input("URL base", st.session_state["api_base_url"], help="Incluye el prefijo /api/v1 de tu backend.")
+        api_base = st.text_input(
+            "URL base",
+            st.session_state["api_base_url"],
+            help="Incluye el prefijo /api/v1 de tu backend.",
+        )
         if api_base != st.session_state["api_base_url"]:
             st.session_state["api_base_url"] = api_base
             cached_active_sorteos.clear()
@@ -75,12 +78,16 @@ def main() -> None:
             if refresh_active:
                 cached_active_sorteos.clear()
 
-            active_payload = cached_active_sorteos(st.session_state["api_base_url"]) if st.session_state["api_base_url"] else {}
+            active_payload = (
+                cached_active_sorteos(st.session_state["api_base_url"]) if st.session_state["api_base_url"] else {}
+            )
             type_options = sorted((active_payload.get("sorteos_por_tipo") or {}).keys())
 
             if not type_options:
                 st.warning("No se encontraron sorteos activos en la API.")
-            default_selection = type_options if not st.session_state["selected_sorteo_types"] else st.session_state["selected_sorteo_types"]
+            default_selection = (
+                type_options if not st.session_state["selected_sorteo_types"] else st.session_state["selected_sorteo_types"]
+            )
             selected_types = st.multiselect(
                 "Tipos de sorteo",
                 options=type_options,
@@ -88,8 +95,19 @@ def main() -> None:
                 help="Selecciona los grupos que deseas procesar.",
                 key="selected_sorteo_types",
             )
-        except httpx.HTTPError as exc:
-            st.error(f"No fue posible consultar los sorteos activos: {exc.response.text if exc.response else exc}")
+        except httpx.TimeoutException:
+            st.error(
+                "Se agotó el tiempo de espera al consultar los sorteos activos. "
+                "Intenta de nuevo o incrementa el timeout del cliente."
+            )
+            active_payload = {}
+            selected_types = []
+        except httpx.HTTPStatusError as exc:
+            st.error(f"HTTP {exc.response.status_code}: {exc.response.text}")
+            active_payload = {}
+            selected_types = []
+        except httpx.RequestError as exc:
+            st.error(f"Error de red al llamar al backend: {exc}")
             active_payload = {}
             selected_types = []
         except Exception as exc:  # pragma: no cover - defensivo
@@ -120,7 +138,8 @@ def main() -> None:
             if not selected_types:
                 st.warning("Selecciona al menos un tipo de sorteo antes de continuar.")
             else:
-                client = APIClient(st.session_state["api_base_url"])
+                # Igual que arriba: elevamos timeout para operaciones potencialmente pesadas
+                client = APIClient(st.session_state["api_base_url"], timeout=300.0)
                 with st.spinner("Ejecutando workflow de predicción..."):
                     try:
                         response = client.create_predictions(
@@ -135,9 +154,12 @@ def main() -> None:
                         st.session_state["last_prediction_at"] = response.get("timestamp") or datetime.utcnow().isoformat()
                         st.session_state["summary_csv"] = None
                         st.success("Predicciones generadas correctamente.")
-                    except httpx.HTTPError as exc:
-                        detail = exc.response.text if exc.response is not None else str(exc)
-                        st.error(f"La API respondió con un error: {detail}")
+                    except httpx.TimeoutException:
+                        st.error("Timeout esperando respuesta del backend al generar predicciones.")
+                    except httpx.HTTPStatusError as exc:
+                        st.error(f"HTTP {exc.response.status_code}: {exc.response.text}")
+                    except httpx.RequestError as exc:
+                        st.error(f"Error de red al llamar al backend: {exc}")
                     except Exception as exc:  # pragma: no cover - defensivo
                         st.error(f"Ocurrió un error inesperado al solicitar las predicciones: {exc}")
 
@@ -145,15 +167,18 @@ def main() -> None:
             st.divider()
             st.header("Resumen descargable")
             if st.button("Actualizar CSV de resumen", use_container_width=True, key="refresh_summary"):
-                client = APIClient(st.session_state["api_base_url"])
+                client = APIClient(st.session_state["api_base_url"], timeout=300.0)
                 with st.spinner("Solicitando resumen al backend..."):
                     try:
                         csv_bytes, filename = client.download_prediction_summary()
                         st.session_state["summary_csv"] = (csv_bytes, filename)
                         st.success("Resumen actualizado.")
-                    except httpx.HTTPError as exc:
-                        detail = exc.response.text if exc.response is not None else str(exc)
-                        st.error(f"No fue posible generar el resumen: {detail}")
+                    except httpx.TimeoutException:
+                        st.error("Timeout esperando la generación/descarga del resumen (CSV).")
+                    except httpx.HTTPStatusError as exc:
+                        st.error(f"No fue posible generar el resumen. HTTP {exc.response.status_code}: {exc.response.text}")
+                    except httpx.RequestError as exc:
+                        st.error(f"Error de red al llamar al backend para el resumen: {exc}")
                     except Exception as exc:  # pragma: no cover - defensivo
                         st.error(f"Error inesperado al descargar el resumen: {exc}")
 
